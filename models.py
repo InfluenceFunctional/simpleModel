@@ -1,7 +1,7 @@
 from utils import *
 
 class param_activation(nn.Module): # a better (pytorch-friendly) implementation of activation as a linear combination of basis functions
-    def __init__(self, n_basis, span, channels, params, *args, **kwargs):
+    def __init__(self, n_basis, span, channels, freezeTag, *args, **kwargs):
         super(param_activation, self).__init__(*args, **kwargs)
 
         self.channels, self.n_basis = channels, n_basis
@@ -14,7 +14,7 @@ class param_activation(nn.Module): # a better (pytorch-friendly) implementation 
         # #This way should be fast and efficient, and play nice with pytorch optim
         self.linear = nn.Conv1d(channels * n_basis, channels, kernel_size=(1,1), groups=int(channels), bias=False)
 
-        if params['dataset'] == 3:
+        if freezeTag == True:
             self.linear.weight.requires_grad = False # turn off learning for activation layer
 
         #nn.init.normal(self.linear.weight.data, std=0.1)
@@ -46,53 +46,61 @@ class param_activation(nn.Module): # a better (pytorch-friendly) implementation 
 
         return x
 
+
 class Activation(nn.Module):
-    def __init__(self, activation_func, filters, params, *args, **kwargs):
+    def __init__(self, activation_func, filters, *args, **kwargs):
         super().__init__()
         if activation_func == 'relu':
             self.activation = F.relu
         elif activation_func == 'parametric':
-            self.activation = param_activation(n_basis=20, span=4, channels=filters, params=params)
+            self.activation = param_activation(n_basis=20, span=4, channels=filters, freezeTag=False)
 
     def forward(self, input):
         return self.activation(input)
 
-class linear_net(nn.Module): # the model itself
+
+class MLP(nn.Module):
     def __init__(self,params):
-        super(linear_net,self).__init__()
+        super(MLP,self).__init__()
         # initialize constants and layers
 
-        if params['activation']==1:
+        if True:
             act_func = 'relu'
-        elif params['activation']==2:
-            act_func = 'parametric'
+        #elif params['activation']==2:
+        #    act_func = 'kernel'
 
-        self.layers = params['layers']
+        self.inputLength = params['input length']
 
-        self.initial_layer = nn.Linear(params['input length'], params['filters']) # layer which takes in our sequence
-        self.output_layer = nn.Linear(params['filters'], 1) # we are outputting a number so the output size is 1
-        self.activation1 = Activation(act_func,params['filters'],params)
+        self.layers = params['model layers']
+        self.filters = params['model filters']
 
+        # build input and output layers
+        self.initial_layer = nn.Linear(self.inputLength, self.filters) # layer which takes in our sequence
+        self.activation1 = Activation(act_func,self.filters)
+        self.output_layer = nn.Linear(self.filters, 1)
+
+        # build hidden layers
         self.lin_layers = []
-        for i in range(self.layers):
-            self.lin_layers.append(nn.Linear(params['filters'],params['filters']))
-
         self.activations = []
-        for i in range(self.layers):
-            self.activations.append(Activation(act_func,params['filters'],params))
+        #self.norms = []
 
+        for i in range(self.layers):
+            self.lin_layers.append(nn.Linear(self.filters,self.filters))
+            self.activations.append(Activation(act_func, self.filters))
+            #self.norms.append(nn.BatchNorm1d(self.filters))
+
+        # initialize module lists
         self.lin_layers = nn.ModuleList(self.lin_layers)
         self.activations = nn.ModuleList(self.activations)
+        #self.norms = nn.ModuleList(self.norms) # optional normalization layer
 
-    def forward(self, x): # this is how the net will actuall evaluate
+
+    def forward(self, x):
         x = self.activation1(self.initial_layer(x)) # apply linear transformation and nonlinear activation
         for i in range(self.layers):
             x = self.lin_layers[i](x)
             x = self.activations[i](x)
+            #x = self.norms[i](x)
 
         x = self.output_layer(x) # linear transformation to output
-
-
-        return x # x is a number - this is our regression target
-##
-
+        return x

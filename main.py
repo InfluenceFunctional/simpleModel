@@ -1,103 +1,207 @@
-import tqdm
-import math
 import matplotlib.pyplot as plt
-from torchsummary import summary
 from utils import *
-from models import *
+from model import *
+import glob
 
-## Define network parameters
 params = {}  # initialize parameters
-params['filters'] = 8  # 'width' of the network - how much brain power it has per layer
-params['layers'] = 2  # number of layers in the NN
+params['run num'] = 0
+
+# Simulation parameters
+params['mode'] = 'training' # 'training'  'evaluation' 'initialize'
+params['workdir'] = 'C:/Users\mikem\Desktop/simpleNetRuns'
+params['explicit run enumeration'] = False # if this is True, the next run be fresh, in directory 'run%d'%run_num, if false, regular behaviour. Note: only use this on fresh runs
+
+# Define network parameters
+params['model filters'] = 20  # 'width' of the network - how much brain power it has per layer
+params['model layers'] = 20  # number of layers in the NN
+params['ensemble size'] = 1 # number of models in the ensemble
 params['dataset'] = 1 # dataset with random inputs and linear outputs
 params['input length'] = 2  # dimensionality of the input
-params['batch_size'] = 10  # number of training examples per batch
-params['epochs'] = 10  # how many times to cycle through the training data (maximum)
-params['average_over'] = 5 # how many epochs to average over for convergence testing
-params['train_margin'] = 1e-4 # convergence flag
+params['dataset size'] = int(1e6) # max size of training dataset
+params['batch size'] = 1000  # number of training examples per batch
+params['max training epochs'] = 10  # how many times to cycle through the training data (maximum)
+params['average over'] = 10
+params['train_margin'] = 1e-3 # convergence flag
 params['activation'] = 1  # type of activation function 1=ReLU, 2=Gaussian Kernel (experimental)
-params['GPU'] = 1  # toggle for GPU evaluation
+params['GPU'] = 0  # toggle for GPU evaluation NON FUNCTIONAL
 params['dataset seed'] = 1 # random seed for dataset generation
+params['model seed'] = 1 # random seed for models
 
-dataset_sizes = np.array((10000)) # range of dataset sizes to check
-try:
-    n_runs = len(dataset_sizes)
-except:
-    dataset_sizes = np.expand_dims(dataset_sizes,0) # this is necessary if we only are training at one dataset size
-    n_runs = 1
 
-tr_loss_record = np.zeros((n_runs,params['epochs']+1))
-te_loss_record = np.zeros((n_runs,params['epochs']+1))
+class simpleNet():
+    def __init__(self, params):
+        self.params = params
+        self.setup()
 
-## run program
+
+    def setup(self):
+        '''
+        setup working directory
+        move to relevant directory
+        :return:
+        '''
+        self.testMinima = []
+
+        if (self.params['run num'] == 0) or (self.params['explicit run enumeration'] == True): # if making a new workdir
+            if self.params['run num'] == 0:
+                self.makeNewWorkingDirectory()
+            else:
+                self.workDir = self.params['workdir'] + '/run%d'%self.params['run num'] # explicitly enumerate the new run directory
+                os.mkdir(self.workDir)
+
+            os.mkdir(self.workDir + '/ckpts')
+            os.mkdir(self.workDir + '/datasets')
+            #copyfile(self.params['dataset directory'] + '/' + self.params['dataset'],self.workDir + '/datasets/' + self.params['dataset'] + '.npy') # if using a real initial dataset (not toy) copy it to the workdir
+        else:
+            # move to working dir
+            self.workDir = self.params['workdir'] + '/' + 'run%d' %self.params['run num']
+
+        os.chdir(self.workDir)
+
+        # save inputs
+        outputDict = {}
+        outputDict['params'] = self.params
+        np.save('outputsDict',outputDict)
+
+
+    def makeNewWorkingDirectory(self):    # make working directory
+        '''
+        make a new working directory
+        non-overlapping previous entries
+        :return:
+        '''
+        workdirs = glob.glob(self.params['workdir'] + '/' + 'run*') # check for prior working directories
+        if len(workdirs) > 0:
+            prev_runs = []
+            for i in range(len(workdirs)):
+                prev_runs.append(int(workdirs[i].split('run')[-1]))
+
+            prev_max = max(prev_runs)
+            self.workDir = self.params['workdir'] + '/' + 'run%d' %(prev_max + 1)
+            os.mkdir(self.workDir)
+            print('Starting Fresh Run %d' %(prev_max + 1))
+        else:
+            self.workDir = self.params['workdir'] + '/' + 'run1'
+            os.mkdir(self.workDir)
+
+
+    def run(self):
+        '''
+        run one iteration of the pipeline - train model, sample sequences, select sequences, consult oracle
+        :return:
+        '''
+        for i in range(self.params['ensemble size']):
+            self.resetModel(i) # reset between ensemble estimators EVERY ITERATION of the pipeline
+            self.model.converge() # converge model
+            self.testMinima.append(np.amin(self.model.err_te_hist))
+
+        print(f'Model ensemble training converged with average test loss of {bcolors.OKGREEN}%.5f{bcolors.ENDC}' % np.average(np.asarray(self.testMinima[-self.params['ensemble size']:])))
+
+
+    def getModel(self):
+        '''
+        initialize model and check for prior checkpoints
+        :return:
+        '''
+        self.model = model(self.params)
+
+
+    def loadEstimatorEnsemble(self):
+        '''
+        load all the trained models at their best checkpoints
+        and initialize them in an ensemble model where they can all be queried at once
+        :return:
+        '''
+        ensemble = []
+        for i in range(1,self.params['ensemble size'] + 1):
+            self.resetModel(i)
+            self.model.load(i)
+            ensemble.append(self.model.model)
+
+        del self.model
+        self.model = model(self.params,0)
+        self.model.loadEnsemble(ensemble)
+
+
+    def loadModelCheckpoint(self):
+        '''
+        load most recent converged model checkpoint
+        :return:
+        '''
+        self.model.load()
+
+
+    def resetModel(self,ensembleIndex):
+        '''
+        load a new instance of the model with reset parameters
+        :return:
+        '''
+        try: # if we have a model already, delete it
+            del self.model
+        except:
+            pass
+        self.model = model(self.params,ensembleIndex)
+        #print(f'{bcolors.HEADER} New model: {bcolors.ENDC}', getModelName(ensembleIndex))
+
+
+    def saveOutputs(self):
+        '''
+        save params and outputs in a dict
+        :return:
+        '''
+        outputDict = {}
+        outputDict['params'] = self.params
+        np.save('outputsDict',outputDict)
+
+
+def visualizeOutputs(params, extrapolation):
+    '''
+    plot
+    1) learning curves
+    2) 2D error map
+    :return:
+    '''
+    x = (torch.rand((10000,simpleNet.model.params['input length'])) - .5) * 2
+    x = x * extrapolation
+    trueY = toyFunction(x, params['dataset seed'], simpleNet.model.params['input length']).numpy()
+    modelY = simpleNet.model.evaluate(x)
+
+    plt.figure(1)
+    plt.clf()
+
+    plt.subplot(1,2,1)
+    plt.plot(simpleNet.model.err_te_hist,'o-',label='Test')
+    plt.plot(simpleNet.model.err_tr_hist,'o-',label='Train')
+    plt.legend()
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+
+    plt.subplot(2,2,2)
+    plt.tricontourf(x[:,0],x[:,1],trueY,100)
+    plt.title('true function')
+    plt.xlabel('x1')
+    plt.ylabel('x2')
+    plt.colorbar()
+
+    maxY = np.amax(trueY)
+    minY = np.amin(trueY)
+
+    plt.subplot(2,2,4)
+    plt.tricontourf(x[:, 0], x[:, 1], (np.abs(trueY - modelY)),100)
+    plt.title('error')
+    plt.xlabel('x1')
+    plt.ylabel('x2')
+    plt.colorbar()
+
+    plt.tight_layout()
+
 if __name__ == '__main__':
+    simpleNet = simpleNet(params)
+    if params['mode'] == 'initalize':
+        print("Initialized!")
+    elif params['mode'] == 'training':
+        simpleNet.run()
+    elif params['mode'] == 'evaluation':
+        a=1 ### placeholder
 
-    for run in range(n_runs): # typically indexing over different dataset sizes
-        params['dataset size'] = dataset_sizes[run]  # 604  # the maximum number of elements taken in the dataset
-        dir_name = "dataset=%d_dataset_size=%d_filters=%d_layers=%d_activation=%d" %\
-                   (params['dataset'],params['dataset size'], params['filters'], params['layers'], params['activation'])  # directory where logfiles will be saved
-
-        if params['GPU'] == 1:
-            backends.cudnn.benchmark = True  # auto-optimizes certain backend processes
-
-        # initialize the model
-        model = linear_net(params)
-        # build dataset
-        tr, te = get_dataloaders(params)
-        # initialize the optimizer
-        optimizer = optim.Adam(model.parameters(), amsgrad=True)
-        #load checkpoint, if any exists
-        model, optimizer, prev_epoch = load_checkpoint(model, optimizer, dir_name, params['GPU'], 0)
-
-        if params['GPU'] == 1:
-            model.to(torch.device("cuda:0"))
-            print(summary(model, (1,params['input length']))) # only works on GPU for some reason
-
-        # start training!
-        err_tr_hist = [] # history of training losses
-        err_te_hist = [] # history of test losses
-        converged = 0 # convergence flag
-        epoch = prev_epoch # if the model was reloaded, pick-up where it left off
-        while (converged == 0) and (epoch <= (params['epochs']+prev_epoch)):#(epoch in tqdm.tqdm(range(prev_epoch, params['epochs']+prev_epoch))):
-            err_tr = []
-            model.train(True)
-            for i, train_data in enumerate(tr): # get training loss batch-by-batch
-                loss = get_loss(train_data, params, model)
-                tr_loss_record[run,epoch-prev_epoch] = loss.cpu().detach().numpy() # multi-run loss record
-                err_tr.append(loss.data) # record the loss
-
-                optimizer.zero_grad() # run the optimizer
-                loss.backward()
-                optimizer.step()
-
-            # also evaluate on the test dataset!
-            err_te = []
-            model.train(False)
-            with torch.no_grad(): # we won't need gradients! no training just testing
-                for i, test_data in enumerate(te): # get test loss batch-by-batch
-                    loss = get_loss(test_data, params, model)
-                    te_loss_record[run, epoch-prev_epoch] = loss.cpu().detach().numpy()
-                    err_te.append(loss.data) # record the loss
-
-            err_tr_hist.append(torch.mean(torch.stack(err_tr))) # record losses
-            err_te_hist.append(torch.mean(torch.stack(err_te)))
-
-            converged = auto_convergence(params, epoch - prev_epoch, torch.stack(err_tr_hist),torch.stack(err_te_hist)) # check convergence criteria
-            epoch += 1
-            # print outputs
-            print('epoch={}; train loss={:.5f}; test loss={:.5f}'.format(epoch + prev_epoch, torch.mean(torch.stack(err_tr)), torch.mean(torch.stack(err_te)))) # print outputs
-
-
-
-        # save checkpoint
-        torch.save({'epoch': epoch, 'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}, 'ckpts/'+dir_name[:])
-
-    output_dict = {} # save loss on all the runs
-    output_dict['params']=params
-    output_dict['train loss'] = tr_loss_record
-    output_dict['test loss'] = te_loss_record
-
-    np.save('outputs/'+dir_name[:],output_dict)
-
-    # to load this dict x=np.load(dir_name + '_outputs.npy',allow_pickle=True)
-    # then x=x.item()
+    visualizeOutputs(params, 3)

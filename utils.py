@@ -3,108 +3,10 @@ import torch
 import torch.nn.functional as F
 from torch import nn, optim, cuda, backends
 from torch.utils import data
-import pandas as pd
 import matplotlib.pyplot as plt
 import os
 import sys
-
-class build_dataset(): # load the dataset
-    def __init__(self,params):
-        if params['dataset'] == 1: # aptamers fold with one-hot encoding
-            np.random.seed(params['dataset seed'])
-            self.samples = np.random.randn(params['dataset size'],params['input length']) # random normal in 'input length' dimensions
-            self.slopes = np.random.randn(params['input length']) # some linear coefficients
-            self.targets = self.samples @ np.transpose(self.slopes) # dot product
-
-        #shuffle = np.arange(len(self.samples)) # optionally shuffle the inputs
-        #np.random.shuffle(shuffle)
-        #self.samples = self.samples[shuffle] #
-        #self.targets = self.targets[shuffle]
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        return self.samples[idx], self.targets[idx]
-
-
-def get_dataloaders(params): # get the dataloaders, to load the dataset in batches
-    training_batch, dataset_size = params['batch_size'], params['dataset size']
-    dataset = build_dataset(params)  # get data
-    train_size = int(0.9 * len(dataset))  # split data into training and test sets
-    #changed for 90% instead of 80%
-    test_size = len(dataset) - train_size
-
-    # construct dataloaders for inputs and targets
-    train_dataset = []
-    test_dataset = []
-
-    for i in range(train_size):
-        train_dataset.append(dataset[i])
-    for i in range(train_size,train_size+test_size):
-        test_dataset.append(dataset[i])
-
-    tr = data.DataLoader(train_dataset, batch_size=training_batch, shuffle=True, num_workers= 2, pin_memory=True)  # build dataloaders
-    te = data.DataLoader(test_dataset, batch_size=training_batch, shuffle=False, num_workers= 2, pin_memory=True)
-
-    return tr, te
-
-def load_checkpoint(model, optimizer, dir_name, GPU, prev_epoch):
-    if os.path.exists('ckpts/'+dir_name[:]):  #reload model
-        checkpoint = torch.load('ckpts/' + dir_name[:])
-
-        if list(checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
-            for i in list(checkpoint['model_state_dict']):
-                checkpoint['model_state_dict'][i[7:]] = checkpoint['model_state_dict'].pop(i)
-
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        prev_epoch = checkpoint['epoch']
-
-        if GPU == 1:
-            model.cuda()  # move net to GPU
-            for state in optimizer.state.values():  # move optimizer to GPU
-                for k, v in state.items():
-                    if isinstance(v, torch.Tensor):
-                        state[k] = v.cuda()
-
-        model.eval()
-        print('Reloaded model: ', dir_name[:])
-    else:
-        print('New model: ', dir_name[:])
-
-    return model, optimizer, prev_epoch
-
-
-def auto_convergence(params, epoch, err_tr, err_te):
-    converged = 0
-    if epoch > params['average_over']:
-        mean_tr = torch.mean(err_tr[-params['average_over']:])
-        mean_te = torch.mean(err_te[-params['average_over']:])
-
-        if torch.abs(mean_tr - err_tr[-params['average_over']])/mean_tr < params['train_margin']: # if we are not improving tr anymore
-            converged = 1
-
-        if torch.abs(mean_tr) < 0.0001: # set an error floor
-            converged = 1
-
-    return converged
-
-def get_loss(train_data, params, model):
-    inputs = train_data[0]
-    targets = train_data[1]
-    if params['GPU'] == 1:
-        inputs = inputs.cuda()
-        targets = targets.cuda()
-
-
-    output = model(inputs.float())
-    if np.ndim(targets) == 2:
-        targets = targets[:,0]
-
-    loss = F.mse_loss(output[:, 0], targets.float())  # loss function - some room to choose here!
-
-    return loss
+import argparse
 
 
 def rolling_mean(input, run):
@@ -117,3 +19,141 @@ def rolling_mean(input, run):
 
     return output
 
+
+def getDataSize(params):
+    dataset = buildDataset(params)
+
+    return dataset.__len__()
+
+
+class modelEnsemble(nn.Module): # just for evaluation of a pre-trained ensemble
+    def __init__(self,models):
+        super(modelEnsemble, self).__init__()
+        self.models = models
+        self.models = nn.ModuleList(self.models)
+
+    def forward(self, x):
+        output = []
+        for i in range(len(self.models)): # get the prediction from each model
+            output.append(self.models[i](x.clone()))
+
+        output = torch.cat(output,dim=1) #
+        return output # return mean and variance of the ensemble predictions
+
+
+def toyFunction(x, seed, output_length = 1):
+    '''
+    outputs the function we will fit
+    :param x:
+    :return:
+    '''
+    np.random.seed(seed)
+
+    '''
+    # function 1 - bilinear regression
+    slopes = np.random.randn(x.shape[1])  # some linear coefficients
+    y = (slopes[0]*x[:,0])**1 + (slopes[1]*x[:,1])**1
+    '''
+    # function 2 - biquadratic regression
+    slopes = np.random.randn(x.shape[1])  # some linear coefficients
+    y = (slopes[0]*x[:,0])**2 + (slopes[1]*x[:,1])**2
+
+    # function 3 - ???
+    #y = slopes[0]*np.tanh(x[:,0])*x[:,1]**3 + slopes[1]*np.exp(x[:,1])*x[:,0]
+    #y = -(slopes[0]*x[:,1] + slopes[1]*x[:,0])**2 + (slopes[0]*x[:,1] + slopes[1]*x[:,0])**4
+    return y
+
+
+class buildDataset():
+    '''
+    build dataset object
+    '''
+    def __init__(self, params):
+        if params['dataset'] == 1: # train on some known function
+            np.random.seed(params['dataset seed'])
+            self.samples = np.random.randn(params['dataset size'],params['input length']) # random normal in 'input length' dimensions
+            self.targets = toyFunction(self.samples, params['dataset seed'], params['input length'])
+
+        '''
+        # or we can preload a dataset
+        dataset = np.load('datasets/' + params['dataset']+'.npy', allow_pickle=True)
+        dataset = dataset.item()
+        self.samples = dataset['samples']
+        self.targets = dataset['scores']
+        '''
+
+        #self.samples, self.targets = shuffle(self.samples, self.targets) # shuffle, if necessary
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        return self.samples[idx], self.targets[idx]
+
+    def getFullDataset(self):
+        return self.samples, self.targets
+
+    def getStandardization(self):
+        return np.mean(self.targets), np.var(self.targets)
+
+
+def getDataloaders(params): # get the dataloaders, to load the dataset in batches
+    '''
+    creat dataloader objects from the dataset
+    :param params:
+    :return:
+    '''
+    training_batch = params['batch size']
+    dataset = buildDataset(params)  # get data
+    train_size = int(0.8 * len(dataset))  # split data into training and test sets
+
+    test_size = len(dataset) - train_size
+
+    # construct dataloaders for inputs and targets
+    train_dataset = []
+    test_dataset = []
+
+    for i in range(test_size, test_size + train_size): # take the training data from the end - we will get the newly appended datapoints this way without ever seeing the test set
+        train_dataset.append(dataset[i])
+    for i in range(test_size):
+        test_dataset.append(dataset[i])
+
+    tr = data.DataLoader(train_dataset, batch_size=training_batch, shuffle=True, num_workers= 2, pin_memory=True)  # build dataloaders
+    te = data.DataLoader(test_dataset, batch_size=training_batch, shuffle=False, num_workers= 2, pin_memory=True)
+
+    return tr, te, dataset.__len__()
+
+
+def getModelName(ensembleIndex):
+    '''
+    :param params: parameters of the pipeline we are training
+    :return: directory label
+    '''
+    dirName = "estimator=" + str(ensembleIndex)
+
+    return dirName
+
+
+def get_input():
+    '''
+    get the command line in put for the run-num. defaulting to a new run (0)
+    :return:
+    '''
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--run_num', type=int, default = 0)
+    cmd_line_input = parser.parse_args()
+    run = cmd_line_input.run_num
+
+    return run
+
+
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
