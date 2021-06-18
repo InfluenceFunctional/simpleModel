@@ -185,6 +185,7 @@ class model():
         evaluate the model
         output types - if "Average" return the average of ensemble predictions
             - if 'Variance' return the variance of ensemble predictions
+            - if 'All' return all the raw predictions from the ensemble
         # future upgrade - isolate epistemic uncertainty from intrinsic randomness
         :param Data: input data
         :return: model scores
@@ -196,6 +197,8 @@ class model():
                 return np.average(out,axis=1) * self.std + self.mean
             elif output == 'Variance':
                 return np.var(out.detach().numpy()* self.std + self.mean,axis=1)
+            elif output =='All':
+                return out.detach().numpy() * self.std + self.mean
 
 
     def loadEnsemble(self,models):

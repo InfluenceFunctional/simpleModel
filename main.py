@@ -10,22 +10,26 @@ params['run num'] = 0
 params['mode'] = 'training' # 'training'  'evaluation' 'initialize'
 params['workdir'] = 'C:/Users\mikem\Desktop/simpleNetRuns'
 params['explicit run enumeration'] = False # if this is True, the next run be fresh, in directory 'run%d'%run_num, if false, regular behaviour. Note: only use this on fresh runs
+params['GPU'] = 0  # toggle for GPU evaluation NON FUNCTIONAL NOW but easy to do
 
 # Define network parameters
-params['model filters'] = 20  # 'width' of the network - how much brain power it has per layer
-params['model layers'] = 20  # number of layers in the NN
-params['ensemble size'] = 1 # number of models in the ensemble
+params['model filters'] = 8  # 'width' of the network - how much brain power it has per layer
+params['model layers'] = 2  # number of layers in the NN
+params['ensemble size'] = 5 # number of models in the ensemble
+params['activation'] = 1  # type of activation function 1=ReLU, 2=Gaussian Kernel (experimental)
+
+# dataset parameters
 params['dataset'] = 1 # dataset with random inputs and linear outputs
 params['input length'] = 2  # dimensionality of the input
-params['dataset size'] = int(1e6) # max size of training dataset
-params['batch size'] = 1000  # number of training examples per batch
+params['dataset size'] = int(1e4) # max size of training dataset
+
+# training parameters
+params['batch size'] = 100  # number of training examples per batch
 params['max training epochs'] = 10  # how many times to cycle through the training data (maximum)
-params['average over'] = 10
+params['average over'] = 10 # how many epochs to average over for convergence purposes
 params['train_margin'] = 1e-3 # convergence flag
-params['activation'] = 1  # type of activation function 1=ReLU, 2=Gaussian Kernel (experimental)
-params['GPU'] = 0  # toggle for GPU evaluation NON FUNCTIONAL
 params['dataset seed'] = 1 # random seed for dataset generation
-params['model seed'] = 1 # random seed for models
+params['model seed'] = 1 # random seed for model initialization
 
 
 class simpleNet():
@@ -161,20 +165,24 @@ def visualizeOutputs(params, extrapolation):
     2) 2D error map
     :return:
     '''
-    x = (torch.rand((10000,simpleNet.model.params['input length'])) - .5) * 2
-    x = x * extrapolation
-    trueY = toyFunction(x, params['dataset seed'], simpleNet.model.params['input length']).numpy()
-    modelY = simpleNet.model.evaluate(x)
-
     plt.figure(1)
     plt.clf()
 
-    plt.subplot(1,2,1)
+    plt.subplot(2,2,1)
+    plt.title('Single model losses')
     plt.plot(simpleNet.model.err_te_hist,'o-',label='Test')
     plt.plot(simpleNet.model.err_tr_hist,'o-',label='Train')
     plt.legend()
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
+
+    x = (torch.rand((10000,simpleNet.model.params['input length'])) - .5) * 2
+    x = x * extrapolation
+    trueY = toyFunction(x, params['dataset seed'], simpleNet.model.params['input length']).numpy()
+    if params['ensemble size'] > 1:
+        simpleNet.loadEstimatorEnsemble()
+    modelY = simpleNet.model.evaluate(x)
+
 
     plt.subplot(2,2,2)
     plt.tricontourf(x[:,0],x[:,1],trueY,100)
@@ -192,6 +200,15 @@ def visualizeOutputs(params, extrapolation):
     plt.xlabel('x1')
     plt.ylabel('x2')
     plt.colorbar()
+
+    if params['ensemble size'] > 1:
+        modelSigma = simpleNet.model.evaluate(x,output='Variance')
+        plt.subplot(2, 2, 3)
+        plt.tricontourf(x[:, 0], x[:, 1], modelSigma, 100)
+        plt.title('Ensemble Uncertainty')
+        plt.xlabel('x1')
+        plt.ylabel('x2')
+        plt.colorbar()
 
     plt.tight_layout()
 
