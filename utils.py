@@ -49,7 +49,7 @@ def toyFunction(x, seed, output_length = 1):
     '''
     np.random.seed(seed)
 
-    '''
+
     # function 1 - bilinear regression
     slopes = np.random.randn(x.shape[1])  # some linear coefficients
     y = (slopes[0]*x[:,0])**1 + (slopes[1]*x[:,1])**1
@@ -57,7 +57,7 @@ def toyFunction(x, seed, output_length = 1):
     # function 2 - biquadratic regression
     slopes = np.random.randn(x.shape[1])  # some linear coefficients
     y = (slopes[0]*x[:,0])**2 + (slopes[1]*x[:,1])**2
-
+    '''
     # function 3 - ???
     #y = slopes[0]*np.tanh(x[:,0])*x[:,1]**3 + slopes[1]*np.exp(x[:,1])*x[:,0]
     #y = -(slopes[0]*x[:,1] + slopes[1]*x[:,0])**2 + (slopes[0]*x[:,1] + slopes[1]*x[:,0])**4

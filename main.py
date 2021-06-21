@@ -15,7 +15,7 @@ params['GPU'] = 0  # toggle for GPU evaluation NON FUNCTIONAL NOW but easy to do
 # Define network parameters
 params['model filters'] = 8  # 'width' of the network - how much brain power it has per layer
 params['model layers'] = 2  # number of layers in the NN
-params['ensemble size'] = 5 # number of models in the ensemble
+params['ensemble size'] = 1 # number of models in the ensemble
 params['activation'] = 1  # type of activation function 1=ReLU, 2=Gaussian Kernel (experimental)
 
 # dataset parameters
