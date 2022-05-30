@@ -70,7 +70,6 @@ class MLP(nn.Module):
         #    act_func = 'kernel'
 
         self.inputLength = params['input length']
-
         self.layers = params['model layers']
         self.filters = params['model filters']
 
@@ -98,8 +97,7 @@ class MLP(nn.Module):
     def forward(self, x):
         x = self.activation1(self.initial_layer(x)) # apply linear transformation and nonlinear activation
         for i in range(self.layers):
-            x = self.lin_layers[i](x)
-            x = self.activations[i](x)
+            x = x + (self.activations[i](self.lin_layers[i](x)))
             #x = self.norms[i](x)
 
         x = self.output_layer(x) # linear transformation to output

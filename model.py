@@ -11,6 +11,7 @@ class model():
         torch.random.manual_seed(params['model seed'] + self.ensembleIndex)
         torch.random.seed()
 
+
     def initModel(self):
         '''
         Initialize model and optimizer
@@ -20,6 +21,8 @@ class model():
         self.optimizer = optim.AdamW(self.model.parameters(), amsgrad=True)
         datasetBuilder = buildDataset(self.params)
         self.mean, self.std = datasetBuilder.getStandardization()
+        if self.params['GPU'] == 1:
+            self.model = self.model.cuda()
 
 
     def save(self, best):
@@ -143,15 +146,11 @@ class model():
             inputs = inputs.cuda()
             targets = targets.cuda()
 
-        # convert our inputs to a one-hot encoding
-        #one_hot_inputs = F.one_hot(torch.Tensor(letters2numbers(inputs)).long(), 4)
-        # flatten inputs to a 1D vector
-        #one_hot_inputs = torch.reshape(one_hot_inputs, (one_hot_inputs.shape[0], self.params['input length']))
         # evaluate the model
         output = self.model(inputs.float())
         # loss function - some room to choose here!
         targets = (targets - self.mean)/self.std # standardize the targets, but only during training
-        return F.smooth_l1_loss(output[:,0], targets.float())
+        return F.smooth_l1_loss(output, targets.float())
 
 
     def checkConvergence(self):
@@ -192,7 +191,13 @@ class model():
         '''
         self.model.train(False)
         with torch.no_grad():  # we won't need gradients! no training just testing
-            out = self.model(torch.Tensor(Data).float())
+            Data = torch.Tensor(Data).float()
+            if self.params['GPU'] == 1:
+                Data = Data.cuda()
+            out = self.model(Data)
+            if self.params['GPU'] == 1:
+                out = out.cpu().detach().numpy()
+
             if output == 'Average':
                 return np.average(out,axis=1) * self.std + self.mean
             elif output == 'Variance':

@@ -43,24 +43,29 @@ class modelEnsemble(nn.Module): # just for evaluation of a pre-trained ensemble
 
 def toyFunction(x, seed, output_length = 1):
     '''
-    outputs the function we will fit
+    outputs the function we will fit - pick whatever you want!
     :param x:
     :return:
     '''
     np.random.seed(seed)
 
-
+    '''
     # function 1 - bilinear regression
     slopes = np.random.randn(x.shape[1])  # some linear coefficients
-    y = (slopes[0]*x[:,0])**1 + (slopes[1]*x[:,1])**1
+    y = (slopes[0]*x[:,0]) + (slopes[1]*x[:,1])
     '''
     # function 2 - biquadratic regression
-    slopes = np.random.randn(x.shape[1])  # some linear coefficients
-    y = (slopes[0]*x[:,0])**2 + (slopes[1]*x[:,1])**2
-    '''
-    # function 3 - ???
+    #slopes = np.random.randn(x.shape[1])  # some linear coefficients
+    #y = (slopes[0]*x[:,0])**2 + (slopes[1]*x[:,1])**2
+
+    y = np.sin(x*1.3) * np.exp(-np.abs(x)) * x ** 3 + np.tanh(x)
+
+    #function 3 - ???
     #y = slopes[0]*np.tanh(x[:,0])*x[:,1]**3 + slopes[1]*np.exp(x[:,1])*x[:,0]
     #y = -(slopes[0]*x[:,1] + slopes[1]*x[:,0])**2 + (slopes[0]*x[:,1] + slopes[1]*x[:,0])**4
+    #y = np.sin(2*slopes[0] * x[:,0]) * np.exp(x[:,0]) + slopes[1]*x[:,1]**2*np.tanh(x[:,1])
+    #y = np.sin(np.sqrt(x[:, 0] ** 2 + x[:, 1] ** 2) * 10) * np.exp(-np.abs(x[:, 0]))
+
     return y
 
 
@@ -97,7 +102,7 @@ class buildDataset():
         return np.mean(self.targets), np.var(self.targets)
 
 
-def getDataloaders(params): # get the dataloaders, to load the dataset in batches
+def getDataloaders(params):
     '''
     creat dataloader objects from the dataset
     :param params:

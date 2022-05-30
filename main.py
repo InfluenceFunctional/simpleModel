@@ -7,25 +7,25 @@ params = {}  # initialize parameters
 params['run num'] = 0
 
 # Simulation parameters
-params['mode'] = 'training' # 'training'  'evaluation' 'initialize'
-params['workdir'] = 'C:/Users\mikem\Desktop/simpleNetRuns'
+params['workdir'] = 'C:/Users\mikem\Desktop/simpleNetRuns' # TODO make this a directory on your local machine!
 params['explicit run enumeration'] = False # if this is True, the next run be fresh, in directory 'run%d'%run_num, if false, regular behaviour. Note: only use this on fresh runs
-params['GPU'] = 0  # toggle for GPU evaluation NON FUNCTIONAL NOW but easy to do
+params['GPU'] = 0  # toggle for GPU evaluation
 
 # Define network parameters
-params['model filters'] = 8  # 'width' of the network - how much brain power it has per layer
-params['model layers'] = 2  # number of layers in the NN
-params['ensemble size'] = 1 # number of models in the ensemble
-params['activation'] = 1  # type of activation function 1=ReLU, 2=Gaussian Kernel (experimental)
+params['model filters'] = 128  # AKA number of nodes, the 'width' of the network
+params['model layers'] = 20 # number of layers in the NN, the 'depth' of the network
+params['ensemble size'] = 1 # number of models in the ensemble (for >1, we can compute the variance in predictions from different models)
+params['activation'] = 1  # type of activation function 1=ReLU, 2=Gaussian Kernel (experimental, expensive)
 
 # dataset parameters
-params['dataset'] = 1 # dataset with random inputs and linear outputs
-params['input length'] = 2  # dimensionality of the input
-params['dataset size'] = int(1e4) # max size of training dataset
+params['dataset'] = 1 # 1=dataset with random inputs and linear outputs, 2= not implemented - could load a dataset
+params['input length'] = 1  # dimensionality of the input - must agree with what is loaded or created in toyFunction. Figures are set up for 1D
+params['dataset size'] = int(1e2) # number of training points
 
 # training parameters
-params['batch size'] = 100  # number of training examples per batch
-params['max training epochs'] = 10  # how many times to cycle through the training data (maximum)
+params['batch size'] = 10  # number of training examples per batch
+params['max training epochs'] = 100  # how many times to cycle through the training data (maximum)
+
 params['average over'] = 10 # how many epochs to average over for convergence purposes
 params['train_margin'] = 1e-3 # convergence flag
 params['dataset seed'] = 1 # random seed for dataset generation
@@ -68,7 +68,7 @@ class simpleNet():
         np.save('outputsDict',outputDict)
 
 
-    def makeNewWorkingDirectory(self):    # make working directory
+    def makeNewWorkingDirectory(self):
         '''
         make a new working directory
         non-overlapping previous entries
@@ -91,7 +91,6 @@ class simpleNet():
 
     def run(self):
         '''
-        run one iteration of the pipeline - train model, sample sequences, select sequences, consult oracle
         :return:
         '''
         for i in range(self.params['ensemble size']):
@@ -170,7 +169,7 @@ def visualizeOutputs(params, extrapolation):
 
     plt.subplot(2,2,1)
     plt.title('Single model losses')
-    plt.plot(simpleNet.model.err_te_hist,'o-',label='Test')
+    plt.semilogy(simpleNet.model.err_te_hist,'o-',label='Test')
     plt.plot(simpleNet.model.err_tr_hist,'o-',label='Train')
     plt.legend()
     plt.xlabel('Epochs')
@@ -179,27 +178,40 @@ def visualizeOutputs(params, extrapolation):
     x = (torch.rand((10000,simpleNet.model.params['input length'])) - .5) * 2
     x = x * extrapolation
     trueY = toyFunction(x, params['dataset seed'], simpleNet.model.params['input length']).numpy()
-    if params['ensemble size'] > 1:
-        simpleNet.loadEstimatorEnsemble()
+
     modelY = simpleNet.model.evaluate(x)
 
-
-    plt.subplot(2,2,2)
-    plt.tricontourf(x[:,0],x[:,1],trueY,100)
-    plt.title('true function')
-    plt.xlabel('x1')
-    plt.ylabel('x2')
-    plt.colorbar()
+    #plt.subplot(2,2,2)
+    plt.subplot(2,1,2)
+    if x.shape[1] > 1:
+        plt.tricontourf(x[:,0],x[:,1],trueY,100)
+        plt.title('true function')
+        plt.xlabel('x1')
+        plt.ylabel('x2')
+        plt.colorbar()
+    else:
+        plt.plot(x,trueY,'.')
+        plt.plot(x,modelY,'.')
+        plt.title('True and Predicted with {:.3f}x extrapolation'.format(extrapolation))
+        plt.xlabel('x')
+        plt.ylabel('y')
+        plt.legend(('True','Model'))
 
     maxY = np.amax(trueY)
     minY = np.amin(trueY)
 
-    plt.subplot(2,2,4)
-    plt.tricontourf(x[:, 0], x[:, 1], (np.abs(trueY - modelY)),100)
-    plt.title('error')
-    plt.xlabel('x1')
-    plt.ylabel('x2')
-    plt.colorbar()
+    plt.subplot(2,2,2)
+    if x.shape[1] > 1:
+        plt.tricontourf(x[:, 0], x[:, 1], (np.abs(trueY - modelY)),100)
+        plt.title('error')
+        plt.xlabel('x1')
+        plt.ylabel('x2')
+        plt.colorbar()
+    else:
+        plt.plot(x, np.abs(trueY[:,0] - modelY),'.')
+        plt.xlabel('x')
+        plt.ylabel('L1 Loss')
+        plt.title('Prediction Error')
 
     if params['ensemble size'] > 1:
         modelSigma = simpleNet.model.evaluate(x,output='Variance')
@@ -214,11 +226,6 @@ def visualizeOutputs(params, extrapolation):
 
 if __name__ == '__main__':
     simpleNet = simpleNet(params)
-    if params['mode'] == 'initalize':
-        print("Initialized!")
-    elif params['mode'] == 'training':
-        simpleNet.run()
-    elif params['mode'] == 'evaluation':
-        a=1 ### placeholder
+    simpleNet.run()
 
-    visualizeOutputs(params, 3)
+    visualizeOutputs(params, 10)
